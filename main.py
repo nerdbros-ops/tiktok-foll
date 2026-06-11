@@ -32,7 +32,7 @@ async def get_tiktok_followers(username: str) -> dict:
     params = {"token": APIFY_TOKEN}
     payload = {
         "profiles": [f"https://www.tiktok.com/@{username}"],
-        "resultsPerPage": 0,
+        "resultsPerPage": 1,
         "shouldDownloadVideos": False,
         "shouldDownloadCovers": False,
     }

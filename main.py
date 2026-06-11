@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import httpx
+import asyncio
 import os
 
 app = FastAPI()
@@ -151,12 +152,17 @@ scheduler = AsyncIOScheduler()
 
 @app.on_event("startup")
 async def startup():
-    # Jalankan sekali langsung saat server start
-    await monitor_job()
-    # Lalu jadwalkan setiap 15 menit
+    # Jadwalkan setiap 15 menit
     scheduler.add_job(monitor_job, "interval", minutes=15, id="tiktok_monitor")
     scheduler.start()
     print(f"[scheduler] Berjalan — cek setiap 15 menit untuk @{TIKTOK_USERNAME}")
+    # Tunggu 5 detik biar server fully ready, lalu langsung cek pertama kali
+    asyncio.create_task(run_first_check())
+
+async def run_first_check():
+    await asyncio.sleep(5)
+    print("[startup] Menjalankan pengecekan pertama...")
+    await monitor_job()
 
 @app.on_event("shutdown")
 async def shutdown():

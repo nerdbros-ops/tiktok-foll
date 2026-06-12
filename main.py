@@ -192,6 +192,34 @@ def root():
         "target_reached": target_reached,
     }
 
+
+@app.get("/debug/{username}")
+async def debug_raw(username: str):
+    """
+    Tampilkan SEMUA data mentah dari Apify untuk username tertentu.
+    Gunakan ini untuk cari field follower count yang paling presisi.
+    Contoh: GET /debug/arthaadaa
+    """
+    username = username.lstrip("@")
+    url = "https://api.apify.com/v2/acts/automation-lab~tiktok-profile-scraper/run-sync-get-dataset-items"
+    params  = {"token": APIFY_TOKEN}
+    payload = {"profiles": [f"@{username}"]}
+
+    async with httpx.AsyncClient(timeout=90) as client:
+        resp = await client.post(url, params=params, json=payload)
+
+        if resp.status_code not in (200, 201):
+            raise HTTPException(status_code=502, detail=f"Apify error {resp.status_code}: {resp.text[:500]}")
+
+        items = resp.json()
+        if not items:
+            raise HTTPException(status_code=404, detail="Data kosong.")
+
+        return {
+            "raw_data": items[0],
+            "available_keys": list(items[0].keys()),
+        }
+
 @app.get("/status")
 async def get_status():
     if not TIKTOK_USERNAME:

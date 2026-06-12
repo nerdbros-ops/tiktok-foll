@@ -28,46 +28,44 @@ target_reached = False
 
 async def get_tiktok_followers(username: str) -> dict:
     """
-    Pakai Apify actor 'novi~tiktok-scraper' yang khusus return data profil user
-    termasuk followerCount.
+    Pakai Apify actor 'automation-lab/tiktok-profile-scraper' yang
+    mengembalikan data profil termasuk followerCount.
     """
     username = username.lstrip("@")
 
-    url = "https://api.apify.com/v2/acts/novi~tiktok-scraper/run-sync-get-dataset-items"
+    url = "https://api.apify.com/v2/acts/automation-lab~tiktok-profile-scraper/run-sync-get-dataset-items"
     params  = {"token": APIFY_TOKEN}
     payload = {
-        "username": [username],
-        "proxy": {"useApifyProxy": True},
+        "profiles": [f"@{username}"],
     }
 
     async with httpx.AsyncClient(timeout=90) as client:
-        resp  = await client.post(url, params=params, json=payload)
+        resp = await client.post(url, params=params, json=payload)
 
-        # Apify kadang return 200 atau 201 — keduanya valid
+        # Apify bisa return 200 atau 201 — keduanya valid
         if resp.status_code not in (200, 201):
             raise Exception(f"Apify error {resp.status_code}: {resp.text[:300]}")
 
         items = resp.json()
         if not items:
-            raise Exception(f"Data kosong untuk @{username}. Pastikan akun publik.")
+            raise Exception(f"Data kosong untuk @{username}. Pastikan akun publik dan masih aktif.")
 
-        user      = items[0]
+        profile   = items[0]
         followers = (
-            user.get("followerCount") or
-            user.get("followers") or
-            user.get("stats", {}).get("followerCount") or 0
+            profile.get("followerCount") or
+            profile.get("followers") or
+            profile.get("stats", {}).get("followerCount") or 0
         )
         name = (
-            user.get("nickname") or
-            user.get("name") or
-            user.get("displayName") or
+            profile.get("nickname") or
+            profile.get("name") or
+            profile.get("displayName") or
             username
         )
 
         if followers == 0:
-            # Log semua key yang ada untuk debugging
-            print(f"[debug] Keys dari Apify: {list(user.keys())}")
-            raise Exception(f"followerCount = 0. Keys tersedia: {list(user.keys())}")
+            print(f"[debug] Keys dari Apify: {list(profile.keys())}")
+            raise Exception(f"followerCount = 0. Keys tersedia: {list(profile.keys())}")
 
         return {
             "username": username,

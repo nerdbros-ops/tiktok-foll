@@ -21,40 +21,57 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 TIKTOK_USERNAME  = os.environ.get("TIKTOK_USERNAME", "")
 TARGET_FOLLOWERS = int(os.environ.get("TARGET_FOLLOWERS", "2000000"))
 
-# Pastikan notif "target tercapai" hanya dikirim sekali
 target_reached = False
 
 
-# ─── AMBIL FOLLOWER DARI APIFY ───────────────────────────────────────────────
+# ─── AMBIL FOLLOWER VIA APIFY ────────────────────────────────────────────────
 
 async def get_tiktok_followers(username: str) -> dict:
+    """
+    Pakai Apify actor 'novi~tiktok-scraper' yang khusus return data profil user
+    termasuk followerCount.
+    """
     username = username.lstrip("@")
-    url = "https://api.apify.com/v2/acts/clockworks~free-tiktok-scraper/run-sync-get-dataset-items"
-    params = {"token": APIFY_TOKEN}
+
+    url = "https://api.apify.com/v2/acts/novi~tiktok-scraper/run-sync-get-dataset-items"
+    params  = {"token": APIFY_TOKEN}
     payload = {
-        "profiles": [f"https://www.tiktok.com/@{username}"],
-        "resultsPerPage": 1,
-        "shouldDownloadVideos": False,
-        "shouldDownloadCovers": False,
+        "username": [username],
+        "proxy": {"useApifyProxy": True},
     }
 
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post(url, params=params, json=payload)
+    async with httpx.AsyncClient(timeout=90) as client:
+        resp  = await client.post(url, params=params, json=payload)
 
-        if resp.status_code != 200:
-            raise Exception(f"Apify error {resp.status_code}: {resp.text[:200]}")
+        # Apify kadang return 200 atau 201 — keduanya valid
+        if resp.status_code not in (200, 201):
+            raise Exception(f"Apify error {resp.status_code}: {resp.text[:300]}")
 
         items = resp.json()
         if not items:
-            raise Exception(f"Data tidak ditemukan untuk @{username}")
+            raise Exception(f"Data kosong untuk @{username}. Pastikan akun publik.")
 
-        profile      = items[0]
-        followers    = profile.get("followersCount", 0) or profile.get("authorMeta", {}).get("fans", 0)
-        display_name = profile.get("authorMeta", {}).get("name") or profile.get("authorMeta", {}).get("nickName", username)
+        user      = items[0]
+        followers = (
+            user.get("followerCount") or
+            user.get("followers") or
+            user.get("stats", {}).get("followerCount") or 0
+        )
+        name = (
+            user.get("nickname") or
+            user.get("name") or
+            user.get("displayName") or
+            username
+        )
+
+        if followers == 0:
+            # Log semua key yang ada untuk debugging
+            print(f"[debug] Keys dari Apify: {list(user.keys())}")
+            raise Exception(f"followerCount = 0. Keys tersedia: {list(user.keys())}")
 
         return {
             "username": username,
-            "display_name": display_name,
+            "display_name": name,
             "followers": followers,
             "followers_formatted": format_number(followers),
             "profile_url": f"https://www.tiktok.com/@{username}",
@@ -77,7 +94,7 @@ def progress_bar(pct: float) -> str:
 # ─── KIRIM TELEGRAM ──────────────────────────────────────────────────────────
 
 async def send_telegram(message: str) -> bool:
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    url     = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
     async with httpx.AsyncClient(timeout=10) as client:
         try:
@@ -87,7 +104,7 @@ async def send_telegram(message: str) -> bool:
             return False
 
 
-# ─── JOB UTAMA (dijalankan otomatis setiap 15 menit) ────────────────────────
+# ─── JOB UTAMA ───────────────────────────────────────────────────────────────
 
 async def monitor_job():
     global target_reached
@@ -97,23 +114,22 @@ async def monitor_job():
         return
 
     if target_reached:
-        print("[monitor] Target sudah tercapai sebelumnya, scheduler berhenti.")
+        print("[monitor] Target sudah tercapai, scheduler berhenti.")
         return
 
     print(f"[monitor] Mengecek @{TIKTOK_USERNAME}...")
 
     try:
-        data        = await get_tiktok_followers(TIKTOK_USERNAME)
-        followers   = data["followers"]
-        target      = TARGET_FOLLOWERS
-        pct         = round(min(100, (followers / target) * 100), 2)
-        remaining   = max(0, target - followers)
-        reached     = followers >= target
+        data      = await get_tiktok_followers(TIKTOK_USERNAME)
+        followers = data["followers"]
+        target    = TARGET_FOLLOWERS
+        pct       = round(min(100, (followers / target) * 100), 2)
+        remaining = max(0, target - followers)
+        reached   = followers >= target
 
         print(f"[monitor] @{TIKTOK_USERNAME}: {followers:,} followers ({pct}%)")
 
         if reached and not target_reached:
-            # Notif SPESIAL — target tercapai, kirim sekali lalu berhenti
             target_reached = True
             msg = (
                 f"🎉 <b>TARGET TERCAPAI!</b>\n\n"
@@ -124,10 +140,9 @@ async def monitor_job():
                 f"🔗 {data['profile_url']}"
             )
             await send_telegram(msg)
-            print("[monitor] Target tercapai! Notif spesial dikirim.")
+            print("[monitor] Notif target tercapai dikirim!")
 
         else:
-            # Update RUTIN setiap 15 menit
             status = "✅ Sudah tercapai!" if reached else "⏳ Masih monitoring..."
             msg = (
                 f"📊 <b>Update Follower</b>\n\n"
@@ -139,11 +154,12 @@ async def monitor_job():
                 f"{status}"
             )
             await send_telegram(msg)
-            print(f"[monitor] Update rutin dikirim ke Telegram.")
+            print(f"[monitor] Update rutin dikirim.")
 
     except Exception as e:
-        print(f"[monitor] Error: {e}")
-        await send_telegram(f"⚠️ <b>Monitor Error</b>\n\nGagal mengecek @{TIKTOK_USERNAME}:\n{str(e)}")
+        err = str(e)
+        print(f"[monitor] Error: {err}")
+        await send_telegram(f"⚠️ <b>Monitor Error</b>\n\nGagal mengecek @{TIKTOK_USERNAME}:\n{err[:500]}")
 
 
 # ─── STARTUP & SHUTDOWN ──────────────────────────────────────────────────────
@@ -152,16 +168,14 @@ scheduler = AsyncIOScheduler()
 
 @app.on_event("startup")
 async def startup():
-    # Jadwalkan setiap 15 menit
     scheduler.add_job(monitor_job, "interval", minutes=15, id="tiktok_monitor")
     scheduler.start()
-    print(f"[scheduler] Berjalan — cek setiap 15 menit untuk @{TIKTOK_USERNAME}")
-    # Tunggu 5 detik biar server fully ready, lalu langsung cek pertama kali
+    print(f"[scheduler] Aktif — cek @{TIKTOK_USERNAME} setiap 15 menit")
     asyncio.create_task(run_first_check())
 
 async def run_first_check():
     await asyncio.sleep(5)
-    print("[startup] Menjalankan pengecekan pertama...")
+    print("[startup] Pengecekan pertama...")
     await monitor_job()
 
 @app.on_event("shutdown")
@@ -182,9 +196,8 @@ def root():
 
 @app.get("/status")
 async def get_status():
-    """Cek status monitoring terkini."""
     if not TIKTOK_USERNAME:
-        raise HTTPException(status_code=400, detail="TIKTOK_USERNAME belum diset di Railway.")
+        raise HTTPException(status_code=400, detail="TIKTOK_USERNAME belum diset.")
     try:
         data      = await get_tiktok_followers(TIKTOK_USERNAME)
         followers = data["followers"]
@@ -195,16 +208,14 @@ async def get_status():
             "progress_pct": pct,
             "remaining": max(0, TARGET_FOLLOWERS - followers),
             "reached": followers >= TARGET_FOLLOWERS,
-            "target_reached_notified": target_reached,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/test-telegram")
 async def test_telegram():
-    """Test koneksi Telegram."""
     sent = await send_telegram(
-        "✅ <b>TikTok Monitor aktif!</b>\n\n"
+        f"✅ <b>TikTok Monitor aktif!</b>\n\n"
         f"Memantau: <b>@{TIKTOK_USERNAME}</b>\n"
         f"Target: <b>{TARGET_FOLLOWERS:,}</b>\n\n"
         "Update otomatis setiap 15 menit. 🚀"

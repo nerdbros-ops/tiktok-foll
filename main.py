@@ -102,6 +102,50 @@ async def send_telegram(message: str) -> bool:
             return False
 
 
+async def send_telegram_photo(photo_url: str, caption: str = "") -> bool:
+    """Kirim foto (dari URL) ke Telegram."""
+    url     = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "photo": photo_url, "caption": caption, "parse_mode": "HTML"}
+    async with httpx.AsyncClient(timeout=30) as client:
+        try:
+            resp = await client.post(url, json=payload)
+            if resp.status_code != 200:
+                print(f"[telegram] sendPhoto error: {resp.text[:300]}")
+            return resp.status_code == 200
+        except Exception as e:
+            print(f"[telegram] sendPhoto exception: {e}")
+            return False
+
+
+# ─── SCREENSHOT PROFIL TIKTOK ────────────────────────────────────────────────
+
+async def get_profile_screenshot(profile_url: str) -> str | None:
+    """
+    Ambil screenshot halaman profil TikTok via Microlink API (gratis).
+    Return URL gambar screenshot, atau None kalau gagal.
+    """
+    api_url = "https://api.microlink.io/"
+    params = {
+        "url": profile_url,
+        "screenshot": "true",
+        "meta": "false",
+        "embed": "screenshot.url",
+        "viewport.width": "500",
+        "viewport.height": "900",
+        "waitFor": "3000",  # tunggu 3 detik agar halaman fully load
+    }
+    async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
+        try:
+            resp = await client.get(api_url, params=params)
+            if resp.status_code == 200:
+                return str(resp.url)  # embed=screenshot.url -> redirect ke gambar
+            print(f"[screenshot] error {resp.status_code}: {resp.text[:200]}")
+            return None
+        except Exception as e:
+            print(f"[screenshot] exception: {e}")
+            return None
+
+
 # ─── JOB UTAMA ───────────────────────────────────────────────────────────────
 
 async def monitor_job():
@@ -139,6 +183,22 @@ async def monitor_job():
             )
             await send_telegram(msg)
             print("[monitor] Notif target tercapai dikirim!")
+
+            # Ambil & kirim screenshot profil sebagai bukti visual
+            print("[monitor] Mengambil screenshot profil...")
+            screenshot_url = await get_profile_screenshot(data["profile_url"])
+            if screenshot_url:
+                caption = (
+                    f"📸 <b>Screenshot profil @{data['username']}</b>\n"
+                    f"Saat mencapai {followers:,} followers"
+                )
+                sent = await send_telegram_photo(screenshot_url, caption)
+                if sent:
+                    print("[monitor] Screenshot berhasil dikirim!")
+                else:
+                    await send_telegram("⚠️ Gagal mengirim screenshot, tapi target tetap tercapai.")
+            else:
+                await send_telegram("⚠️ Gagal mengambil screenshot profil.")
 
         else:
             status = "✅ Sudah tercapai!" if reached else "⏳ Masih monitoring..."
@@ -249,3 +309,28 @@ async def test_telegram():
     if sent:
         return {"success": True, "message": "Pesan test berhasil dikirim!"}
     raise HTTPException(status_code=500, detail="Gagal. Cek token dan chat ID.")
+
+
+@app.post("/test-screenshot")
+async def test_screenshot():
+    """
+    Test ambil screenshot profil dan kirim ke Telegram.
+    Gunakan ini untuk mencoba fitur screenshot tanpa menunggu target tercapai.
+    """
+    if not TIKTOK_USERNAME:
+        raise HTTPException(status_code=400, detail="TIKTOK_USERNAME belum diset.")
+
+    profile_url = f"https://www.tiktok.com/@{TIKTOK_USERNAME}"
+    screenshot_url = await get_profile_screenshot(profile_url)
+
+    if not screenshot_url:
+        raise HTTPException(status_code=500, detail="Gagal mengambil screenshot.")
+
+    sent = await send_telegram_photo(
+        screenshot_url,
+        caption=f"📸 Test screenshot profil @{TIKTOK_USERNAME}"
+    )
+
+    if sent:
+        return {"success": True, "message": "Screenshot berhasil dikirim ke Telegram!", "screenshot_url": screenshot_url}
+    raise HTTPException(status_code=500, detail="Screenshot berhasil diambil tapi gagal kirim ke Telegram.")

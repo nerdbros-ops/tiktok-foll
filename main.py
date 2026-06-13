@@ -103,17 +103,35 @@ async def send_telegram(message: str) -> bool:
 
 
 async def send_telegram_photo(photo_url: str, caption: str = "") -> bool:
-    """Kirim foto (dari URL) ke Telegram."""
-    url     = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "photo": photo_url, "caption": caption, "parse_mode": "HTML"}
+    """
+    Kirim foto (dari URL) ke Telegram.
+    Kalau gagal sebagai foto (misal rasio gambar terlalu panjang),
+    otomatis fallback kirim sebagai dokumen/file.
+    """
     async with httpx.AsyncClient(timeout=30) as client:
+        # ── Coba kirim sebagai foto dulu ──
         try:
-            resp = await client.post(url, json=payload)
-            if resp.status_code != 200:
-                print(f"[telegram] sendPhoto error: {resp.text[:300]}")
-            return resp.status_code == 200
+            resp = await client.post(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto",
+                json={"chat_id": TELEGRAM_CHAT_ID, "photo": photo_url, "caption": caption, "parse_mode": "HTML"}
+            )
+            if resp.status_code == 200:
+                return True
+            print(f"[telegram] sendPhoto gagal ({resp.status_code}), coba sebagai dokumen...")
         except Exception as e:
             print(f"[telegram] sendPhoto exception: {e}")
+
+        # ── Fallback: kirim sebagai dokumen ──
+        try:
+            resp = await client.post(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument",
+                json={"chat_id": TELEGRAM_CHAT_ID, "document": photo_url, "caption": caption, "parse_mode": "HTML"}
+            )
+            if resp.status_code != 200:
+                print(f"[telegram] sendDocument juga gagal: {resp.text[:300]}")
+            return resp.status_code == 200
+        except Exception as e:
+            print(f"[telegram] sendDocument exception: {e}")
             return False
 
 
@@ -122,6 +140,8 @@ async def send_telegram_photo(photo_url: str, caption: str = "") -> bool:
 async def get_profile_screenshot(profile_url: str) -> str | None:
     """
     Ambil screenshot halaman profil TikTok via Microlink API (gratis).
+    - Mode mobile (seperti tampilan TikTok di smartphone)
+    - Full page (termasuk grid video terbaru/pinned)
     Return URL gambar screenshot, atau None kalau gagal.
     """
     api_url = "https://api.microlink.io/"
@@ -130,11 +150,17 @@ async def get_profile_screenshot(profile_url: str) -> str | None:
         "screenshot": "true",
         "meta": "false",
         "embed": "screenshot.url",
-        "viewport.width": "500",
-        "viewport.height": "900",
-        "waitFor": "3000",  # tunggu 3 detik agar halaman fully load
+        # ── Mode mobile (seperti smartphone) ──
+        "viewport.width": "390",
+        "viewport.height": "844",
+        "viewport.isMobile": "true",
+        "viewport.deviceScaleFactor": "2",
+        # ── Tangkap seluruh halaman (termasuk grid video) ──
+        "screenshot.fullPage": "true",
+        "screenshot.type": "jpeg",
+        "waitFor": "4000",  # tunggu 4 detik agar video grid sempat load
     }
-    async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=90, follow_redirects=True) as client:
         try:
             resp = await client.get(api_url, params=params)
             if resp.status_code == 200:

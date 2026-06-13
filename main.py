@@ -140,25 +140,31 @@ async def send_telegram_photo(photo_url: str, caption: str = "") -> bool:
 async def get_profile_screenshot(profile_url: str) -> str | None:
     """
     Ambil screenshot halaman profil TikTok via Microlink API (gratis).
-    - Mode mobile (seperti tampilan TikTok di smartphone)
+    - Mode mobile (user-agent iPhone + viewport mobile)
     - Full page (termasuk grid video terbaru/pinned)
     Return URL gambar screenshot, atau None kalau gagal.
     """
     api_url = "https://api.microlink.io/"
+    mobile_ua = (
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+        "Version/17.4 Mobile/15E148 Safari/604.1"
+    )
     params = {
         "url": profile_url,
         "screenshot": "true",
         "meta": "false",
         "embed": "screenshot.url",
-        # ── Mode mobile (seperti smartphone) ──
+        # ── Mode mobile (viewport + user agent iPhone) ──
         "viewport.width": "390",
         "viewport.height": "844",
         "viewport.isMobile": "true",
         "viewport.deviceScaleFactor": "2",
+        "viewport.userAgent": mobile_ua,
         # ── Tangkap seluruh halaman (termasuk grid video) ──
         "screenshot.fullPage": "true",
         "screenshot.type": "jpeg",
-        "waitFor": "4000",  # tunggu 4 detik agar video grid sempat load
+        "waitFor": "6000",  # tunggu 6 detik agar video grid sempat load
     }
     async with httpx.AsyncClient(timeout=90, follow_redirects=True) as client:
         try:
